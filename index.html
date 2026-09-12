@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="ko" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D시뮬레이션을 이용한 사물 구현화 - Realize3D Studio</title>
+  
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+KR:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              400: '#38bdf8',
+              500: '#0ea5e9',
+              600: '#0284c7',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <!-- Application Custom Styles -->
+  <link rel="stylesheet" href="css/style.css">
+
+  <!-- 로컬 설치된 Three.js 라이브러리 및 컨트롤러 (run.bat 없이 바로 실행 가능) -->
+  <script src="lib/three.min.js"></script>
+  <script src="lib/OrbitControls.js"></script>
+  <script src="lib/cannon.min.js"></script>
+  <script src="lib/lucide.js"></script>
+
+  <!-- 만약 로컬 스크립트 로드 실패 시 CDN 자동 폴백 보장 -->
+  <script>
+    if (!window.THREE) {
+      document.write('<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"><\/script>');
+    }
+    if (!window.lucide) {
+      document.write('<script src="https://unpkg.com/lucide@latest"><\/script>');
+    }
+  </script>
+</head>
+<body class="bg-[#03060d] text-slate-100 h-screen w-screen overflow-hidden">
+  <noscript>
+    <div style="padding: 24px; color: white; background: #0f172a; text-align: center; font-family: sans-serif;">
+      자바스크립트가 비활성화되어 있습니다. 브라우저 설정에서 자바스크립트를 활성화해 주세요.
+    </div>
+  </noscript>
+
+  <!-- 100% 자바스크립트로 렌더링되는 SPA 루트 컨테이너 -->
+  <div id="app" class="flex flex-col h-screen w-screen overflow-hidden"></div>
+
+  <!-- 메인 애플리케이션 번들 (file:// 직접 열기 및 웹 서버 모두 완벽 동작) -->
+  <script src="js/app.bundle.js"></script>
+</body>
+</html>
+

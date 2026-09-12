@@ -1,0 +1,292 @@
+/* 3D시뮬레이션을 이용한 사물 구현화 - Realize3D Studio Stylesheet */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+KR:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root {
+  --bg-primary: #03060d;
+  --bg-secondary: #070b14;
+  --bg-tertiary: #0c1220;
+  --border-color: rgba(255, 255, 255, 0.06);
+  --border-focus: #2563eb;
+  --accent: #2563eb;
+  --accent-cyan: #06b6d4;
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  user-select: none;
+}
+
+html, body {
+  font-family: 'Inter', 'Noto Sans KR', -apple-system, BlinkMacSystemFont, sans-serif;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+  margin: 0;
+  padding: 0;
+}
+
+#app {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+#viewport-container {
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  position: relative;
+  overflow: hidden;
+}
+
+#viewport-container canvas {
+  width: 100% !important;
+  height: 100% !important;
+  display: block !important;
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Glassmorphism Classes (Deep Dark Aesthetic) */
+.glass-panel {
+  background: rgba(7, 11, 20, 0.94);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-color);
+}
+
+.glass-floating {
+  background: rgba(5, 8, 16, 0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 16px 36px -6px rgba(0, 0, 0, 0.8), 0 4px 12px rgba(0, 0, 0, 0.6);
+}
+
+/* Studio Toolbar Buttons */
+.tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: 0.5rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-color);
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+}
+.tool-btn:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.15);
+}
+.tool-btn.active {
+  background: rgba(30, 58, 138, 0.4);
+  color: #60a5fa;
+  border-color: rgba(59, 130, 246, 0.5);
+  box-shadow: 0 0 14px rgba(37, 99, 235, 0.25);
+}
+
+/* 중심 위 시뮬레이션 모드 세그먼트 버튼 */
+.sim-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 1rem;
+  border-radius: 0.625rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+}
+.sim-mode-btn:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.04);
+}
+.sim-mode-btn.active {
+  background: #1e3a8a;
+  color: #ffffff;
+  box-shadow: 0 2px 14px rgba(30, 58, 138, 0.5);
+}
+
+/* 중심 밑 업로드 액션 버튼 */
+.btn-upload-glow {
+  background: linear-gradient(135deg, #1e3a8a 0%, #0369a1 50%, #0891b2 100%);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  box-shadow: 0 4px 20px rgba(3, 105, 161, 0.3), 0 2px 8px rgba(0, 0, 0, 0.8);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.btn-upload-glow:hover {
+  transform: translateY(-2px);
+  background: linear-gradient(135deg, #2563eb 0%, #0284c7 50%, #06b6d4 100%);
+  box-shadow: 0 6px 26px rgba(6, 182, 212, 0.45), 0 4px 12px rgba(0, 0, 0, 0.9);
+}
+
+/* 우측 접이식 스펙 표 슬라이드 드로어 */
+.specs-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 340px;
+  max-width: 90vw;
+  background: rgba(4, 7, 14, 0.97);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-left: 1px solid rgba(255, 255, 255, 0.07);
+  z-index: 40;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: -15px 0 40px rgba(0, 0, 0, 0.8);
+}
+.specs-drawer.closed {
+  transform: translateX(100%);
+  pointer-events: none;
+}
+.specs-drawer.open {
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+/* 우측 스펙 표 열기 플로팅 토글 탭 */
+.specs-drawer-toggle {
+  position: absolute;
+  top: 80px;
+  right: 0;
+  z-index: 35;
+  background: rgba(5, 8, 16, 0.95);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-right: none;
+  border-radius: 12px 0 0 12px;
+  padding: 10px 12px;
+  color: #38bdf8;
+  box-shadow: -6px 6px 20px rgba(0, 0, 0, 0.6);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+.specs-drawer-toggle:hover {
+  background: rgba(15, 23, 42, 0.98);
+  color: #ffffff;
+  padding-right: 16px;
+}
+
+/* 스펙 테이블 스타일링 */
+.spec-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.spec-table tr {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.spec-table tr:last-child {
+  border-bottom: none;
+}
+.spec-table th {
+  text-align: left;
+  padding: 9px 8px;
+  color: #94a3b8;
+  font-weight: 500;
+  width: 38%;
+  background: rgba(255, 255, 255, 0.02);
+}
+.spec-table td {
+  padding: 9px 8px;
+  color: #f1f5f9;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+}
+
+/* Range Slider */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 9999px;
+  outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #3b82f6;
+  cursor: pointer;
+  border: 2px solid #ffffff;
+}
+
+/* Part Tooltip */
+.part-tag {
+  position: absolute;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: #fff;
+  z-index: 30;
+  transition: opacity 0.15s ease-out;
+}
+
+/* AI Laser Scan Animation */
+@keyframes scanLaser {
+  0% { top: 5%; opacity: 0.8; }
+  50% { top: 90%; opacity: 1; }
+  100% { top: 5%; opacity: 0.8; }
+}
+
+.scan-laser-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, #38bdf8, #06b6d4, transparent);
+  box-shadow: 0 0 15px #38bdf8, 0 0 25px #06b6d4;
+  animation: scanLaser 2.2s infinite ease-in-out;
+  pointer-events: none;
+}
