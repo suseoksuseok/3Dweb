@@ -32,6 +32,7 @@ import {
 import { PhysicsEngine } from './physics.js';
 import { MaterialPresets, createPBRMaterial } from './materials.js';
 import { exportToSTL, captureScreenshot, generateCertificationCard, computeObjectMetrics } from './exporter.js';
+import { initChatbot } from './chatbot.js';
 
 class Realize3DApp {
   constructor() {
@@ -1402,6 +1403,7 @@ function startApp() {
   window.__appStarted = true;
   buildAppLayout('#app');
   window.realize3D = new Realize3DApp();
+  initChatbot();
   if (window.lucide) lucide.createIcons();
 }
 

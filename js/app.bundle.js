@@ -2,7 +2,15 @@
  * Realize3D Studio - Standalone Client Runtime
  * 3D시뮬레이션을 이용한 사물 구현화
  * 로컬 파일(file://) 및 웹 서버 환경 모두에서 run.bat 없이 즉시 실행 가능한 독립형 번들
+ * 
+ * ============================================================
+ * 🔑 OpenAI ChatGPT API 설정 (API 키 입력 변수)
+ * ============================================================
+ * 아래 window.OPENAI_API_KEY 변수에 본인의 OpenAI API 키를 입력해 주세요.
+ * (또는 화면 우측 하단 챗봇 창의 ⚙️ 설정 아이콘을 눌러 입력하실 수도 있습니다.)
  */
+window.OPENAI_API_KEY = window.OPENAI_API_KEY || ""; // 여기에 OpenAI API 키 입력 (예: "sk-proj-...")
+
 (function() {
   "use strict";
 
@@ -3421,6 +3429,573 @@ function computeObjectMetrics(object) {
   });
 
   // ==========================================
+  // Module: chatbot.js
+  // ==========================================
+  define('chatbot.js', function(require, exports, module) {
+/**
+ * ============================================================
+ * 🤖 AI 챗봇 모듈 (ChatGPT API 연동)
+ * 3D시뮬레이션을 이용한 사물 구현화 - Realize3D Studio
+ * ============================================================
+ * 
+ * [API 키 설정 안내]
+ * 아래 OPENAI_API_KEY 변수에 본인의 OpenAI API 키를 입력해 주세요.
+ * 웹 화면 우측 상단의 ⚙️ 설정 아이콘을 눌러 직접 입력할 수도 있습니다.
+ */
+
+// ============================================================
+// 🔑 OpenAI ChatGPT API 설정 (API 키 및 모델명)
+// ============================================================
+const OPENAI_API_KEY = ""; // 여기에 OpenAI API 키 입력 (예: "sk-proj-...")
+const DEFAULT_OPENAI_MODEL = "gpt-4o-mini"; // OpenAI 정식 유효 모델 ID (추천)
+let OPENAI_MODEL = "gpt-4o-mini"; // 활성 모델 ID
+
+/**
+ * 모델명 친화적 레이블 변환 (UI 뱃지 표시용)
+ */
+function formatModelDisplayName(modelId) {
+  if (!modelId) return 'GPT-4o Mini';
+  const m = modelId.toLowerCase();
+  if (m === 'gpt-4o-mini') return 'GPT-4o Mini';
+  if (m === 'gpt-4o') return 'GPT-4o';
+  if (m === 'o3-mini') return 'o3-mini';
+  if (m === 'o1-mini') return 'o1-mini';
+  if (m === 'gpt-4-turbo') return 'GPT-4 Turbo';
+  if (m === 'gpt-3.5-turbo') return 'GPT-3.5 Turbo';
+  return modelId;
+}
+
+/**
+ * 유효한 모델 ID 조회 (UI 선택값 -> localStorage -> 기본값 순)
+ */
+function getActiveModel() {
+  const selectEl = document.getElementById('chat-model-select');
+  const customEl = document.getElementById('chat-model-custom-input');
+  if (selectEl) {
+    if (selectEl.value === 'custom') {
+      if (customEl && customEl.value.trim().length > 0) {
+        return customEl.value.trim();
+      }
+    } else if (selectEl.value) {
+      return selectEl.value;
+    }
+  }
+  let savedModel = localStorage.getItem('realize3d_openai_model');
+  if (savedModel && (savedModel.includes('5') || savedModel === 'GPT-5 Mini')) {
+    savedModel = DEFAULT_OPENAI_MODEL;
+    localStorage.setItem('realize3d_openai_model', DEFAULT_OPENAI_MODEL);
+  }
+  if (savedModel && savedModel.trim().length > 0) {
+    return savedModel.trim();
+  }
+  if (OPENAI_MODEL && OPENAI_MODEL.trim().length > 0 && !OPENAI_MODEL.includes('5')) {
+    return OPENAI_MODEL.trim();
+  }
+  return DEFAULT_OPENAI_MODEL;
+}
+
+/**
+ * 활성 모델 저장 및 UI 뱃지 업데이트
+ */
+function updateActiveModel(modelId, persist = true) {
+  const trimmed = (modelId || '').trim() || DEFAULT_OPENAI_MODEL;
+  OPENAI_MODEL = trimmed;
+  if (persist) {
+    localStorage.setItem('realize3d_openai_model', trimmed);
+  }
+  const badgeEl = document.getElementById('chat-model-badge');
+  if (badgeEl) {
+    badgeEl.innerText = formatModelDisplayName(trimmed);
+  }
+  const welcomeBadge = document.getElementById('welcome-model-badge');
+  if (welcomeBadge) {
+    welcomeBadge.innerText = formatModelDisplayName(trimmed);
+  }
+}
+
+// 시스템 프롬프트 (3D 시뮬레이터 및 실물 크기 체감 쇼핑 특화)
+const SYSTEM_PROMPT = `당신은 3D 사물 구현화 및 온라인 쇼핑/중고거래 실물 크기 체감 플랫폼 'Realize3D Studio'의 AI 전담 어시스턴트입니다.
+사용자는 온라인 쇼핑이나 중고거래(당근마켓, 번개장터 등)에서 제품의 실물 크기, 치수(W, D, H mm), 모양, 착용감/수납 여부를 궁금해하는 사람들입니다.
+항상 친절하고 전문적인 어조로 답변하며, 필요시 마우스(로지텍 G PRO X, 버티컬 마우스), 텀블러, 헤드폰, 미니백 등 3D 시뮬레이터에서 지원하는 사물들의 크기와 3D 뷰포트 활용 팁을 안내해 주세요.
+한국어로 알기 쉽게 핵심 위주로 명확하게 답변하세요.`;
+
+// 대화 기록 (최근 맥락 유지)
+let chatConversation = [];
+
+/**
+ * 유효한 API 키 조회 (상단 상수 -> 전역 변수 -> 로컬스토리지 순)
+ */
+function getActiveApiKey() {
+  const inputEl = document.getElementById('chat-api-key-input');
+  if (inputEl && inputEl.value && inputEl.value.trim().length > 0) {
+    return inputEl.value.trim();
+  }
+  if (OPENAI_API_KEY && OPENAI_API_KEY.trim().length > 0 && !OPENAI_API_KEY.includes('YOUR_')) {
+    return OPENAI_API_KEY.trim();
+  }
+  if (window.OPENAI_API_KEY && window.OPENAI_API_KEY.trim().length > 0) {
+    return window.OPENAI_API_KEY.trim();
+  }
+  const savedKey = localStorage.getItem('realize3d_openai_key');
+  if (savedKey && savedKey.trim().length > 0) {
+    return savedKey.trim();
+  }
+  return '';
+}
+
+/**
+ * API 키 로컬 저장
+ */
+function saveApiKey(newKey) {
+  const trimmed = (newKey || '').trim();
+  window.OPENAI_API_KEY = trimmed;
+  if (trimmed) {
+    localStorage.setItem('realize3d_openai_key', trimmed);
+  } else {
+    localStorage.removeItem('realize3d_openai_key');
+  }
+}
+
+/**
+ * 텍스트 내 마크다운 간단 변환 (볼드, 인라인코드, 줄바꿈 등)
+ */
+function formatMessageContent(rawText) {
+  if (!rawText) return '';
+  let escaped = rawText
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  // 코드 블록
+  escaped = escaped.replace(/```([\s\S]*?)```/g, '<pre class="bg-black/40 p-2 rounded my-1 text-xs font-mono overflow-x-auto text-cyan-200"><code>$1</code></pre>');
+  // 인라인 코드
+  escaped = escaped.replace(/`([^`]+)`/g, '<code class="bg-white/10 px-1 py-0.5 rounded text-xs text-cyan-300 font-mono">$1</code>');
+  // 볼드체 **text**
+  escaped = escaped.replace(/\*\*([^*]+)\*\*/g, '<strong class="font-bold text-white">$1</strong>');
+  // 불릿 포인트
+  escaped = escaped.replace(/^\s*[-*]\s+(.*)$/gm, '<li class="ml-4 list-disc">$1</li>');
+  // 줄바꿈
+  escaped = escaped.replace(/\n/g, '<br>');
+
+  return escaped;
+}
+
+/**
+ * 현재 시각 문자열 (오전/오후 H:MM)
+ */
+function getCurrentTimeFormatted() {
+  const d = new Date();
+  let hours = d.getHours();
+  const mins = String(d.getMinutes()).padStart(2, '0');
+  const ampm = hours >= 12 ? '오후' : '오전';
+  hours = hours % 12;
+  hours = hours ? hours : 12;
+  return `${ampm} ${hours}:${mins}`;
+}
+
+/**
+ * 챗봇 창 스크롤 최하단 이동
+ */
+function scrollToBottom() {
+  const msgContainer = document.getElementById('chat-messages-container');
+  if (msgContainer) {
+    msgContainer.scrollTop = msgContainer.scrollHeight;
+  }
+}
+
+/**
+ * 사용자 메시지 말풍선 추가
+ */
+function appendUserBubble(text) {
+  const container = document.getElementById('chat-messages-container');
+  if (!container) return;
+
+  const timeStr = getCurrentTimeFormatted();
+  const bubbleHtml = `
+    <div class="chat-message-row user flex justify-end items-end gap-1.5 mb-3 group animate-slide-up">
+      <span class="text-[10px] text-slate-500 pb-0.5 shrink-0 select-none">${timeStr}</span>
+      <div class="max-w-[78%] bg-gradient-to-br from-blue-600 to-cyan-600 text-white text-xs px-3.5 py-2.5 rounded-2xl rounded-tr-none shadow-md shadow-blue-500/10 leading-relaxed break-words">
+        ${formatMessageContent(text)}
+      </div>
+    </div>
+  `;
+  container.insertAdjacentHTML('beforeend', bubbleHtml);
+  scrollToBottom();
+}
+
+/**
+ * 어시스턴트(봇) 메시지 말풍선 추가
+ */
+function appendBotBubble(text, isError = false) {
+  const container = document.getElementById('chat-messages-container');
+  if (!container) return;
+
+  const timeStr = getCurrentTimeFormatted();
+  const bgClass = isError 
+    ? 'bg-rose-950/40 border-rose-500/30 text-rose-200' 
+    : 'bg-[#0b1329] border-white/10 text-slate-200';
+  const iconColor = isError ? 'text-rose-400' : 'text-cyan-400';
+
+  const bubbleHtml = `
+    <div class="chat-message-row bot flex items-start gap-2 mb-3 group animate-slide-up">
+      <div class="w-7 h-7 rounded-full bg-gradient-to-tr from-slate-900 to-[#121c38] border border-cyan-500/30 flex items-center justify-center shrink-0 mt-0.5 shadow-sm">
+        <i data-lucide="bot" class="w-3.5 h-3.5 ${iconColor}"></i>
+      </div>
+      <div class="flex flex-col max-w-[80%]">
+        <div class="text-[10px] font-semibold text-slate-400 mb-0.5 flex items-center gap-1.5">
+          <span>AI 어시스턴트</span>
+          <span class="text-[9px] px-1.5 py-0.2 rounded bg-cyan-500/10 text-cyan-400 font-mono">${OPENAI_MODEL}</span>
+        </div>
+        <div class="border ${bgClass} text-xs px-3.5 py-2.5 rounded-2xl rounded-tl-none shadow-md leading-relaxed break-words">
+          ${formatMessageContent(text)}
+        </div>
+        <span class="text-[9px] text-slate-500 pt-1 pl-1 select-none">${timeStr}</span>
+      </div>
+    </div>
+  `;
+  container.insertAdjacentHTML('beforeend', bubbleHtml);
+  if (window.lucide) window.lucide.createIcons();
+  scrollToBottom();
+}
+
+/**
+ * 응답 대기 중 타이핑 인디케이터 표시
+ */
+function showTypingIndicator() {
+  const container = document.getElementById('chat-messages-container');
+  if (!container) return;
+
+  hideTypingIndicator(); // 기존 중복 제거
+
+  const indicatorHtml = `
+    <div id="chat-typing-indicator" class="chat-message-row bot flex items-start gap-2 mb-3 animate-pulse">
+      <div class="w-7 h-7 rounded-full bg-[#0b1329] border border-cyan-500/30 flex items-center justify-center shrink-0 mt-0.5">
+        <i data-lucide="bot" class="w-3.5 h-3.5 text-cyan-400"></i>
+      </div>
+      <div class="bg-[#0b1329] border border-white/10 px-3.5 py-2.5 rounded-2xl rounded-tl-none flex items-center gap-1.5">
+        <span class="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-bounce" style="animation-delay: 0ms"></span>
+        <span class="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-bounce" style="animation-delay: 150ms"></span>
+        <span class="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-bounce" style="animation-delay: 300ms"></span>
+        <span class="text-[11px] text-slate-400 ml-1 font-sans">답변 생성 중...</span>
+      </div>
+    </div>
+  `;
+  container.insertAdjacentHTML('beforeend', indicatorHtml);
+  if (window.lucide) window.lucide.createIcons();
+  scrollToBottom();
+}
+
+/**
+ * 타이핑 인디케이터 제거
+ */
+function hideTypingIndicator() {
+  const indicator = document.getElementById('chat-typing-indicator');
+  if (indicator) indicator.remove();
+}
+
+/**
+ * OpenAI ChatGPT API 호출 (선택된 모델: gpt-4o-mini 등)
+ */
+async function callChatGPT(promptText) {
+  const apiKey = getActiveApiKey();
+  const activeModel = getActiveModel();
+
+  // API 키 미설정 시 안내
+  if (!apiKey) {
+    const keyInput = document.getElementById('chat-api-key-input');
+    if (keyInput) {
+      keyInput.focus();
+      keyInput.classList.add('border-rose-500', 'ring-2', 'ring-rose-500/30');
+      setTimeout(() => keyInput.classList.remove('border-rose-500', 'ring-2', 'ring-rose-500/30'), 2500);
+    }
+    appendBotBubble(`⚠️ **OpenAI API 키를 입력해 주세요.**\n\n채팅창 상단의 **'OpenAI API 키 직접 입력'** 칸에 키(예: \`sk-proj-...\`)를 넣으신 후 다시 질문해 주세요.`, true);
+    return;
+  }
+
+  // 대화 기록에 사용자 메시지 추가
+  chatConversation.push({ role: 'user', content: promptText });
+  if (chatConversation.length > 10) {
+    chatConversation = chatConversation.slice(-10); // 최근 10개 유지
+  }
+
+  showTypingIndicator();
+
+  try {
+    const isReasoningModel = activeModel.startsWith('o1') || activeModel.startsWith('o3');
+    const payload = {
+      model: activeModel,
+      messages: [
+        { role: isReasoningModel ? 'developer' : 'system', content: SYSTEM_PROMPT },
+        ...chatConversation
+      ]
+    };
+    if (!isReasoningModel) {
+      payload.temperature = 0.7;
+    }
+
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify(payload)
+    });
+
+    hideTypingIndicator();
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => null);
+      let errMsg = `API 호출 오류 (${res.status})`;
+
+      const errMessage = (errData?.error?.message || '').toLowerCase();
+      const errCode = (errData?.error?.code || '').toLowerCase();
+
+      if (res.status === 401) {
+        errMsg = `인증 실패 (401): API 키가 올바르지 않습니다. 키를 다시 확인해 주세요.`;
+      } else if (res.status === 404 || (res.status === 400 && (errMessage.includes('model') || errCode.includes('model')))) {
+        errMsg = `잘못된 모델 ID (${res.status}): 요청하신 모델 [${activeModel}]은 OpenAI API에서 지원하지 않거나 유효하지 않습니다.\n\n` +
+          `💡 **해결 방법**: OpenAI 정식 모델인 **\`gpt-4o-mini\`**(추천) 또는 \`gpt-4o\`를 선택해 주세요. 채팅창 상단의 '모델 선택' 드롭다운에서 바로 변경하실 수 있습니다.`;
+      } else if (errData && errData.error && errData.error.message) {
+        errMsg = `${errMsg}: ${errData.error.message}`;
+      }
+
+      appendBotBubble(`❌ **ChatGPT API 호출에 실패했습니다.**\n\n${errMsg}`, true);
+      return;
+    }
+
+    const data = await res.json();
+    const botReply = data.choices && data.choices[0] && data.choices[0].message 
+      ? data.choices[0].message.content 
+      : '응답을 파싱할 수 없습니다.';
+
+    // 대화 기록에 봇 응답 추가
+    chatConversation.push({ role: 'assistant', content: botReply });
+
+    // 말풍선 출력
+    appendBotBubble(botReply);
+
+  } catch (err) {
+    hideTypingIndicator();
+    console.error('ChatGPT API Error:', err);
+    appendBotBubble(`❌ **네트워크 오류 또는 요청 차단이 발생했습니다.**\n\n세부 내용: ${err.message || err}`, true);
+  }
+}
+
+/**
+ * 챗봇 UI 이벤트 리스너 및 초기화
+ */
+function initChatbot() {
+  const toggleBtn = document.getElementById('btn-toggle-chatbot');
+  const chatWindow = document.getElementById('chatbot-window');
+  const closeBtn = document.getElementById('btn-close-chatbot');
+  const sendBtn = document.getElementById('btn-chat-send');
+  const inputEl = document.getElementById('chat-input');
+  const saveKeyBtn = document.getElementById('btn-save-chat-key');
+  const keyInputEl = document.getElementById('chat-api-key-input');
+  const toggleKeyVisibilityBtn = document.getElementById('btn-toggle-key-visibility');
+  const statusTag = document.getElementById('chat-api-status-tag');
+  const rememberCheckbox = document.getElementById('chat-remember-key');
+  const badgeDot = document.getElementById('chat-badge-dot');
+  const modelSelectEl = document.getElementById('chat-model-select');
+  const customModelInputEl = document.getElementById('chat-model-custom-input');
+
+  if (!toggleBtn || !chatWindow) return;
+
+  // 상태 뱃지 업데이트 함수
+  const updateStatusBadge = (key) => {
+    const k = (key || '').trim();
+    if (!statusTag) return;
+    if (k.length > 5) {
+      statusTag.innerText = '✅ 키 적용됨';
+      statusTag.className = 'text-[9px] px-2 py-0.5 rounded-full font-mono transition-all bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+    } else {
+      statusTag.innerText = '⚠️ 키 미입력';
+      statusTag.className = 'text-[9px] px-2 py-0.5 rounded-full font-mono transition-all bg-amber-500/15 text-amber-300 border border-amber-500/30';
+    }
+  };
+
+  // 초기 키 불러오기 & 뱃지 갱신
+  const initialKey = getActiveApiKey();
+  if (keyInputEl && initialKey) {
+    keyInputEl.value = initialKey;
+  }
+  updateStatusBadge(initialKey);
+
+  // 초기 모델 설정 및 UI 동기화
+  const initialModel = getActiveModel();
+  if (modelSelectEl) {
+    const standardModels = ['gpt-4o-mini', 'gpt-4o', 'o3-mini', 'o1-mini'];
+    if (standardModels.includes(initialModel)) {
+      modelSelectEl.value = initialModel;
+      if (customModelInputEl) customModelInputEl.classList.add('hidden');
+    } else {
+      modelSelectEl.value = 'custom';
+      if (customModelInputEl) {
+        customModelInputEl.classList.remove('hidden');
+        customModelInputEl.value = initialModel;
+      }
+    }
+    updateActiveModel(initialModel, false);
+
+    modelSelectEl.addEventListener('change', () => {
+      if (modelSelectEl.value === 'custom') {
+        if (customModelInputEl) {
+          customModelInputEl.classList.remove('hidden');
+          customModelInputEl.focus();
+          const curVal = customModelInputEl.value.trim() || DEFAULT_OPENAI_MODEL;
+          updateActiveModel(curVal, true);
+        }
+      } else {
+        if (customModelInputEl) customModelInputEl.classList.add('hidden');
+        updateActiveModel(modelSelectEl.value, true);
+      }
+    });
+  }
+
+  if (customModelInputEl) {
+    customModelInputEl.addEventListener('input', () => {
+      const val = customModelInputEl.value.trim();
+      if (val) {
+        updateActiveModel(val, true);
+      }
+    });
+  }
+
+  // 실시간 입력 감지 (타이핑하는 즉시 대화에 반영)
+  if (keyInputEl) {
+    keyInputEl.addEventListener('input', () => {
+      const currentVal = keyInputEl.value.trim();
+      window.OPENAI_API_KEY = currentVal;
+      updateStatusBadge(currentVal);
+      if (rememberCheckbox && rememberCheckbox.checked) {
+        saveApiKey(currentVal);
+      }
+    });
+
+    // 엔터키 입력 시 적용
+    keyInputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (saveKeyBtn) saveKeyBtn.click();
+      }
+    });
+  }
+
+  // [적용] 버튼 클릭 시 동작
+  if (saveKeyBtn && keyInputEl) {
+    saveKeyBtn.addEventListener('click', () => {
+      const val = keyInputEl.value.trim();
+      window.OPENAI_API_KEY = val;
+      if (rememberCheckbox && rememberCheckbox.checked) {
+        saveApiKey(val);
+      } else {
+        localStorage.removeItem('realize3d_openai_key');
+      }
+      updateStatusBadge(val);
+
+      if (val) {
+        saveKeyBtn.innerHTML = '<i data-lucide="check-check" class="w-3.5 h-3.5"></i> <span>완료!</span>';
+        if (window.lucide) lucide.createIcons();
+        setTimeout(() => {
+          saveKeyBtn.innerHTML = '<i data-lucide="check" class="w-3.5 h-3.5"></i> <span>적용</span>';
+          if (window.lucide) lucide.createIcons();
+        }, 1500);
+        appendBotBubble(`✅ **설정이 성공적으로 적용되었습니다!**\n- 적용 모델: \`${formatModelDisplayName(getActiveModel())}\`\n이제 질문을 남겨주시면 AI가 즉시 답변해 드립니다.`);
+        if (inputEl) inputEl.focus();
+      } else {
+        appendBotBubble('ℹ️ API 키 입력칸이 비어 있습니다. 사용하실 OpenAI 키를 입력해 주세요.', true);
+      }
+    });
+  }
+
+  // 비밀번호 보기 / 숨기기 눈 모양 토글 버튼
+  if (toggleKeyVisibilityBtn && keyInputEl) {
+    toggleKeyVisibilityBtn.addEventListener('click', () => {
+      const isPass = keyInputEl.type === 'password';
+      keyInputEl.type = isPass ? 'text' : 'password';
+      toggleKeyVisibilityBtn.innerHTML = isPass 
+        ? '<i data-lucide="eye-off" class="w-3.5 h-3.5 text-cyan-400"></i>' 
+        : '<i data-lucide="eye" class="w-3.5 h-3.5 text-slate-400"></i>';
+      if (window.lucide) lucide.createIcons();
+    });
+  }
+
+  // 1. 챗봇 열기 / 닫기 토글
+  const toggleChat = (forceOpen) => {
+    const isCurrentlyOpen = !chatWindow.classList.contains('hidden');
+    const shouldOpen = forceOpen !== undefined ? forceOpen : !isCurrentlyOpen;
+
+    if (shouldOpen) {
+      chatWindow.classList.remove('hidden');
+      toggleBtn.classList.add('active');
+      if (badgeDot) badgeDot.classList.add('hidden'); // 미확인 알림 해제
+      scrollToBottom();
+      // 만약 키가 아직 비어있다면 바로 키 입력창으로 포커스 안내
+      if (keyInputEl && !keyInputEl.value) {
+        keyInputEl.focus();
+      } else if (inputEl) {
+        inputEl.focus();
+      }
+    } else {
+      chatWindow.classList.add('hidden');
+      toggleBtn.classList.remove('active');
+    }
+  };
+
+  toggleBtn.addEventListener('click', () => toggleChat());
+  if (closeBtn) closeBtn.addEventListener('click', () => toggleChat(false));
+
+  // 2. 메시지 전송 처리
+  const handleSend = () => {
+    if (!inputEl) return;
+    const text = inputEl.value.trim();
+    if (!text) return;
+
+    inputEl.value = '';
+    appendUserBubble(text);
+    callChatGPT(text);
+  };
+
+  if (sendBtn) sendBtn.addEventListener('click', handleSend);
+
+  if (inputEl) {
+    inputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        handleSend();
+      }
+    });
+  }
+
+  // 3. 빠른 질문 칩 클릭
+  document.querySelectorAll('.chat-quick-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const prompt = chip.dataset.prompt || chip.innerText.trim();
+      appendUserBubble(prompt);
+      callChatGPT(prompt);
+    });
+  });
+}
+
+
+  exports.formatModelDisplayName = formatModelDisplayName;
+  exports.getActiveModel = getActiveModel;
+  exports.updateActiveModel = updateActiveModel;
+  exports.getActiveApiKey = getActiveApiKey;
+  exports.saveApiKey = saveApiKey;
+  exports.appendUserBubble = appendUserBubble;
+  exports.appendBotBubble = appendBotBubble;
+  exports.showTypingIndicator = showTypingIndicator;
+  exports.hideTypingIndicator = hideTypingIndicator;
+  exports.callChatGPT = callChatGPT;
+  exports.initChatbot = initChatbot;
+  exports.OPENAI_API_KEY = OPENAI_API_KEY;
+  exports.DEFAULT_OPENAI_MODEL = DEFAULT_OPENAI_MODEL;
+  exports.OPENAI_MODEL = OPENAI_MODEL;
+  });
+
+  // ==========================================
   // Module: scene.js
   // ==========================================
   define('scene.js', function(require, exports, module) {
@@ -4104,10 +4679,138 @@ function buildAppLayout(rootElement) {
       </div>
     </div>
 
-    <!-- 토스트 알림 -->
-    <div id="toast" class="fixed bottom-6 right-6 z-50 px-4 py-2.5 rounded-xl bg-[#050813]/95 border border-blue-500/30 text-sm text-blue-300 shadow-xl backdrop-blur-md opacity-0 transition-opacity duration-300 pointer-events-none">
+    <!-- 토스트 알림 (챗봇 버튼과 겹치지 않도록 위치 조정) -->
+    <div id="toast" class="fixed bottom-24 right-6 z-50 px-4 py-2.5 rounded-xl bg-[#050813]/95 border border-blue-500/30 text-sm text-blue-300 shadow-xl backdrop-blur-md opacity-0 transition-opacity duration-300 pointer-events-none">
       알림
     </div>
+
+    <!-- ============================================================ -->
+    <!-- [사용자 요청] 화면 오른쪽 아래 동그란 AI 챗봇 버튼 -->
+    <!-- ============================================================ -->
+    <button id="btn-toggle-chatbot" class="fixed bottom-6 right-6 z-40 w-14 h-14 rounded-full bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-400 hover:scale-110 active:scale-95 text-white shadow-2xl shadow-cyan-500/30 flex items-center justify-center transition-all duration-300 border border-white/20 group cursor-pointer" title="AI 쇼핑 챗봇 열기">
+      <i data-lucide="message-square" class="w-6 h-6 group-hover:scale-110 transition-transform"></i>
+      <!-- 온라인 상태 및 알림 뱃지 -->
+      <span id="chat-badge-dot" class="absolute top-0 right-0 w-3.5 h-3.5 bg-emerald-400 border-2 border-[#03060d] rounded-full animate-pulse"></span>
+    </button>
+
+    <!-- ============================================================ -->
+    <!-- [사용자 요청] AI 챗봇 대화창 (ChatGPT GPT-5 Mini 연동) -->
+    <!-- ============================================================ -->
+    <aside id="chatbot-window" class="hidden fixed bottom-24 right-6 z-50 w-[380px] max-w-[calc(100vw-2rem)] h-[580px] max-h-[calc(100vh-8rem)] rounded-2xl bg-[#060a14]/95 backdrop-blur-2xl border border-white/15 shadow-2xl flex flex-col overflow-hidden animate-slide-up">
+      <!-- 챗봇 상단 헤더 -->
+      <div class="h-13 border-b border-white/10 bg-[#080d1e]/95 px-4 flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-cyan-400 p-0.5 shadow-md shadow-cyan-500/30 flex items-center justify-center">
+            <i data-lucide="bot" class="w-4 h-4 text-slate-950"></i>
+          </div>
+          <div>
+            <div class="flex items-center gap-2">
+              <h3 class="text-sm font-bold text-white tracking-tight">Realize3D AI 어시스턴트</h3>
+              <span id="chat-model-badge" class="text-[9px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 font-mono font-semibold">GPT-4o Mini</span>
+            </div>
+            <p class="text-[10px] text-slate-400">실물 크기 및 3D 쇼핑 도우미</p>
+          </div>
+        </div>
+
+        <button id="btn-close-chatbot" class="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition cursor-pointer" title="채팅창 닫기">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <!-- [사용자 요청] 웹 상에서 매번 직접 API 키를 넣을 수 있는 상시 입력 바 & 모델 선택기 -->
+      <div id="chat-api-key-bar" class="border-b border-white/10 bg-[#070e22] px-3.5 py-2.5 flex flex-col gap-2 shrink-0">
+        <div class="flex items-center justify-between">
+          <label for="chat-api-key-input" class="text-[11px] font-semibold text-slate-200 flex items-center gap-1.5">
+            <i data-lucide="key" class="w-3.5 h-3.5 text-cyan-400"></i>
+            <span>OpenAI API 키 직접 입력</span>
+          </label>
+          <span id="chat-api-status-tag" class="text-[9px] px-2 py-0.5 rounded-full font-mono transition-all bg-amber-500/15 text-amber-300 border border-amber-500/30">
+            키 미입력
+          </span>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <div class="relative flex-1 flex items-center">
+            <input type="password" id="chat-api-key-input" placeholder="sk-proj-... 키를 입력하세요" class="w-full bg-[#03060d] border border-white/15 focus:border-cyan-400 rounded-lg pl-2.5 pr-8 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none font-mono transition">
+            <button type="button" id="btn-toggle-key-visibility" class="absolute right-2 text-slate-400 hover:text-white p-0.5 transition cursor-pointer" title="키 보기/숨기기">
+              <i data-lucide="eye" class="w-3.5 h-3.5" id="icon-key-eye"></i>
+            </button>
+          </div>
+          <button type="button" id="btn-save-chat-key" class="px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-cyan-500 hover:opacity-95 text-white font-semibold text-xs shadow-md shadow-blue-500/20 transition shrink-0 cursor-pointer flex items-center gap-1">
+            <i data-lucide="check" class="w-3.5 h-3.5"></i>
+            <span>적용</span>
+          </button>
+        </div>
+
+        <!-- [invalid model ID 해결] OpenAI 공식 모델 선택 및 직접 입력 바 -->
+        <div class="flex items-center justify-between pt-1 border-t border-white/5 gap-1.5">
+          <label for="chat-model-select" class="text-[10px] font-medium text-slate-300 flex items-center gap-1 shrink-0">
+            <i data-lucide="cpu" class="w-3 h-3 text-cyan-400"></i>
+            <span>모델 선택:</span>
+          </label>
+          <div class="flex items-center gap-1 flex-1 justify-end">
+            <select id="chat-model-select" class="bg-[#03060d] border border-white/15 focus:border-cyan-400 rounded px-2 py-0.5 text-[11px] text-cyan-300 font-mono focus:outline-none cursor-pointer transition">
+              <option value="gpt-4o-mini" selected>gpt-4o-mini (추천 / 초고속)</option>
+              <option value="gpt-4o">gpt-4o (플래그십 고성능)</option>
+              <option value="o3-mini">o3-mini (최신 추론 특화)</option>
+              <option value="o1-mini">o1-mini (경량 추론)</option>
+              <option value="custom">직접 입력...</option>
+            </select>
+            <input type="text" id="chat-model-custom-input" placeholder="모델 ID 입력" class="hidden w-24 bg-[#03060d] border border-cyan-500/50 rounded px-1.5 py-0.5 text-[11px] text-cyan-200 font-mono focus:outline-none">
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between text-[10px] text-slate-400">
+          <span class="text-slate-400">💡 올바른 모델 ID 선택 시 에러 없이 즉시 대화 가능</span>
+          <label class="flex items-center gap-1 cursor-pointer text-slate-300 hover:text-white">
+            <input type="checkbox" id="chat-remember-key" checked class="rounded border-white/20 bg-slate-900 text-blue-500">
+            <span>자동 기억</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- 메시지 대화 목록 (스크롤 가능) -->
+      <div id="chat-messages-container" class="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar text-xs">
+        <!-- 초기 웰컴 봇 말풍선 -->
+        <div class="chat-message-row bot flex items-start gap-2 mb-3 group">
+          <div class="w-7 h-7 rounded-full bg-gradient-to-tr from-slate-900 to-[#121c38] border border-cyan-500/30 flex items-center justify-center shrink-0 mt-0.5 shadow-sm">
+            <i data-lucide="bot" class="w-3.5 h-3.5 text-cyan-400"></i>
+          </div>
+          <div class="flex flex-col max-w-[82%]">
+            <div class="text-[10px] font-semibold text-slate-400 mb-0.5 flex items-center gap-1.5">
+              <span>AI 어시스턴트</span>
+              <span id="welcome-model-badge" class="text-[9px] px-1.5 py-0.2 rounded bg-cyan-500/10 text-cyan-400 font-mono">GPT-4o Mini</span>
+            </div>
+            <div class="border border-white/10 bg-[#0b1329] text-slate-200 text-xs px-3.5 py-2.5 rounded-2xl rounded-tl-none shadow-md leading-relaxed">
+              안녕하세요! <strong>Realize3D</strong> 쇼핑 도우미입니다. ✨<br><br>
+              제품의 실물 크기 체감, 3D 비교 분석, 또는 중고거래(당근마켓 등) 관련 궁금한 점을 자유롭게 질문해 주세요!
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 빠른 질문 칩 영역 -->
+      <div class="px-3 py-1.5 border-t border-white/5 bg-[#050813]/60 flex items-center gap-1.5 overflow-x-auto no-scrollbar shrink-0">
+        <button class="chat-quick-chip shrink-0 text-[11px] px-2.5 py-1 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-cyan-300 transition cursor-pointer" data-prompt="로지텍 G PRO X 마우스의 실제 크기와 그립감은 어때?">
+          🖱️ G PRO X 크기
+        </button>
+        <button class="chat-quick-chip shrink-0 text-[11px] px-2.5 py-1 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-cyan-300 transition cursor-pointer" data-prompt="텀블러 500ml 크기가 가방에 쏙 들어갈까?">
+          🥤 텀블러 수납
+        </button>
+        <button class="chat-quick-chip shrink-0 text-[11px] px-2.5 py-1 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-cyan-300 transition cursor-pointer" data-prompt="3D 시뮬레이션에서 다른 사물과 비교하는 방법 알려줘">
+          📐 3D 비교법
+        </button>
+      </div>
+
+      <!-- 하단 메시지 입력창 & 전송 버튼 -->
+      <div class="p-3 border-t border-white/10 bg-[#070c1a]/95 shrink-0">
+        <div class="flex items-center gap-2 bg-[#04060e] border border-white/15 focus-within:border-cyan-500 rounded-xl p-1.5 transition shadow-inner">
+          <input type="text" id="chat-input" placeholder="궁금한 실물 스펙이나 질문을 입력하세요..." class="flex-1 bg-transparent px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none">
+          <button id="btn-chat-send" class="w-8 h-8 rounded-lg bg-gradient-to-tr from-blue-600 to-cyan-500 hover:opacity-90 text-white flex items-center justify-center transition shadow-md shadow-blue-500/20 shrink-0 cursor-pointer" title="메시지 전송">
+            <i data-lucide="send" class="w-3.5 h-3.5"></i>
+          </button>
+        </div>
+      </div>
+    </aside>
 
     <!-- 도움말 가이드 모달 -->
     <div id="help-modal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -4124,8 +4827,9 @@ function buildAppLayout(rootElement) {
           <li><strong>중심 위:</strong> [사물 한 개만 보기] vs [다른 사물과 비교하기] 모드를 전환합니다.</li>
           <li><strong>중심 밑:</strong> [사진·동영상 업로드] 버튼으로 내 제품을 AI로 스캔해 3D로 만듭니다.</li>
           <li><strong>화면 오른쪽:</strong> [정밀 스펙 표] 탭을 누르면 사물의 크기와 수납 여부가 표로 정리되어 나타납니다.</li>
+          <li><strong>우측 하단 챗봇:</strong> 동그란 버튼을 눌러 ChatGPT (gpt-4o-mini / gpt-4o 등) AI와 실시간으로 대화할 수 있습니다.</li>
         </ul>
-        <button id="btn-confirm-help" class="w-full py-2 rounded-xl bg-blue-700 hover:bg-blue-600 font-semibold text-white mt-2 transition shadow-md">
+        <button id="btn-confirm-help" class="w-full py-2 rounded-xl bg-blue-700 hover:bg-blue-600 font-semibold text-white mt-2 transition shadow-md cursor-pointer">
           확인했습니다
         </button>
       </div>
@@ -4180,6 +4884,7 @@ const {
 const { PhysicsEngine } = require("./physics.js");
 const { MaterialPresets, createPBRMaterial } = require("./materials.js");
 const { exportToSTL, captureScreenshot, generateCertificationCard, computeObjectMetrics } = require("./exporter.js");
+const { initChatbot } = require("./chatbot.js");
 
 class Realize3DApp {
   constructor() {
@@ -5550,6 +6255,7 @@ function startApp() {
   window.__appStarted = true;
   buildAppLayout('#app');
   window.realize3D = new Realize3DApp();
+  initChatbot();
   if (window.lucide) lucide.createIcons();
 }
 
